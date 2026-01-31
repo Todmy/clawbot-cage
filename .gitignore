@@ -1,0 +1,11 @@
+# Cloned openclaw source (build context only)
+openclaw/
+
+# Runtime data
+workspace/
+
+# Generated secrets
+.env
+
+# OS junk
+.DS_Store
