@@ -51,6 +51,8 @@ services:
       - openclaw_state:/home/node/.openclaw
       - ./config/openclaw.json:/home/node/.openclaw/openclaw.json:ro
       - ./workspace:/home/node/workspace
+      # Workaround: openclaw resolves templates to /docs instead of /app/docs (off-by-one in ../../../)
+      - ./openclaw/docs/reference/templates:/docs/reference/templates:ro
     ports:
       - "${OPENCLAW_BIND_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
       - "${OPENCLAW_BIND_HOST:-127.0.0.1}:${OPENCLAW_BRIDGE_PORT:-18790}:18790"
@@ -86,6 +88,7 @@ services:
     volumes:
       - openclaw_state:/home/node/.openclaw
       - ./workspace:/home/node/workspace
+      - ./openclaw/docs/reference/templates:/docs/reference/templates:ro
     stdin_open: true
     tty: true
     init: true
