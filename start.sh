@@ -3,10 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+OPENCLAW_DIR="./openclaw"
+
 # Clone openclaw source if not present
-if [ ! -d "./openclaw" ]; then
+if [ ! -d "$OPENCLAW_DIR" ]; then
   echo "==> Cloning openclaw..."
-  git clone --depth 1 https://github.com/openclaw/openclaw.git ./openclaw
+  git clone --depth 1 https://github.com/openclaw/openclaw.git "$OPENCLAW_DIR"
 fi
 
 # Create workspace dir
@@ -28,19 +30,31 @@ fi
 echo "==> Building OpenClaw image..."
 docker compose build openclaw-gateway
 
-# Start Ollama first, pull the model, then start the gateway
+# Build sandbox image if the script exists
+if [ -f "$OPENCLAW_DIR/scripts/sandbox-setup.sh" ]; then
+  echo "==> Building sandbox image..."
+  (cd "$OPENCLAW_DIR" && bash scripts/sandbox-setup.sh)
+fi
+
+# Start Ollama
 echo "==> Starting Ollama..."
 docker compose up -d ollama
 
-echo "==> Pulling qwen2.5-coder:32b (this will take a while on first run)..."
-docker compose exec ollama ollama pull qwen2.5-coder:32b
+# Pull the model via the temporary setup service (has internet access)
+echo "==> Pulling model (this will take a while on first run)..."
+docker compose --profile setup run --rm ollama-pull
 
+# Run onboard wizard (CLI needs rw config access)
 echo "==> Running onboard wizard..."
-docker compose run --rm openclaw-cli onboard --no-install-daemon
+docker compose --profile cli run --rm openclaw-cli onboard --no-install-daemon
 
+# Start the gateway
 echo "==> Starting gateway..."
 docker compose up -d openclaw-gateway
 
 echo ""
 echo "Done! Dashboard: http://localhost:18789/"
-echo "Ollama API: http://localhost:11434/"
+echo ""
+echo "Network mode: ISOLATED (no internet)."
+echo "To enable internet access for the gateway:"
+echo "  docker compose -f docker-compose.yml -f docker-compose.internet.yml up -d openclaw-gateway"

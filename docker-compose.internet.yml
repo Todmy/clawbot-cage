@@ -1,0 +1,7 @@
+# Include this file to give the gateway internet access.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.internet.yml up -d
+services:
+  openclaw-gateway:
+    networks:
+      - internal
+      - external

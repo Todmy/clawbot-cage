@@ -4,6 +4,53 @@ Run [OpenClaw](https://github.com/openclaw/openclaw) with fully local open-sourc
 
 **Default model:** Qwen 2.5 Coder 32B (~20GB download, ~20GB VRAM or CPU fallback)
 
+## Security Model
+
+This setup is hardened by default. The gateway runs in an isolated environment with multiple layers of protection against prompt injection and host compromise.
+
+**Network isolation (default: no internet)**
+- The gateway and Ollama communicate over an internal Docker network with no internet access.
+- Ports are bound to `127.0.0.1` only — not exposed to LAN.
+- Internet access can be explicitly enabled when needed (see below).
+
+**Container hardening**
+- `read_only: true` — container root filesystem is immutable.
+- `cap_drop: ALL` — all Linux capabilities removed, no privilege escalation possible.
+- `no-new-privileges` — blocks setuid/setgid binaries.
+- `tmpfs` for `/tmp` and cache — ephemeral, size-limited, not on host.
+- Gateway runs as non-root user (`node`, uid 1000).
+
+**Host filesystem protection**
+- `config/` is mounted **read-only** into the gateway — a prompt injection cannot rewrite the bot's own config, model settings, or system prompts.
+- `workspace/` is the only writable host mount. The agent can read/write files here (required for its job), but cannot traverse outside this directory.
+- The CLI service (`openclaw-cli`) has read-write config access but only runs on-demand during setup, not as a persistent service.
+
+**Agent sandbox (defense in depth)**
+- Agent tool execution (shell commands, file operations) runs in throwaway Docker containers with `network: "none"`, read-only root, and all capabilities dropped.
+- Even if a prompt injection tricks the agent into running a malicious command, it executes in a sandbox that can't reach the network or the host.
+
+### Enabling Internet Access
+
+By default, the gateway has **no outbound internet**. To enable it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.internet.yml up -d openclaw-gateway
+```
+
+To go back to isolated mode:
+
+```bash
+docker compose up -d openclaw-gateway
+```
+
+### What's Still Exposed
+
+Be aware of what the agent _can_ do within its constraints:
+
+- Read and write files in `./workspace/` — don't put secrets or sensitive files there.
+- Communicate with Ollama on the internal network (this is required for inference).
+- Accept connections on `127.0.0.1:18789` — only accessible from your machine, but any local process can reach it if it knows the token.
+
 ## Prerequisites
 
 - Git
@@ -22,7 +69,7 @@ cd clawbot-cage
 The script will:
 1. Clone the OpenClaw source into `./openclaw/`
 2. Generate a secure gateway token in `.env`
-3. Build the OpenClaw Docker image
+3. Build the OpenClaw image and sandbox image
 4. Start Ollama and pull `qwen2.5-coder:32b`
 5. Run the interactive onboard wizard
 6. Start the gateway
@@ -38,16 +85,19 @@ git clone --depth 1 https://github.com/openclaw/openclaw.git ./openclaw
 # 2. Build the image
 docker compose build openclaw-gateway
 
-# 3. Start Ollama
+# 3. Build sandbox image (optional, for agent tool isolation)
+(cd ./openclaw && bash scripts/sandbox-setup.sh)
+
+# 4. Start Ollama
 docker compose up -d ollama
 
-# 4. Pull the model (first run only)
-docker compose exec ollama ollama pull qwen2.5-coder:32b
+# 5. Pull the model (first run only, uses temporary internet-enabled container)
+docker compose --profile setup run --rm ollama-pull
 
-# 5. Run onboard wizard
-docker compose run --rm openclaw-cli onboard --no-install-daemon
+# 6. Run onboard wizard
+docker compose --profile cli run --rm openclaw-cli onboard --no-install-daemon
 
-# 6. Start the gateway
+# 7. Start the gateway
 docker compose up -d openclaw-gateway
 ```
 
@@ -55,14 +105,16 @@ docker compose up -d openclaw-gateway
 
 ```
 clawbot-cage/
-├── .env                    # Env vars (token, ports) — auto-generated on first run
-├── docker-compose.yml      # All services: Ollama + OpenClaw gateway + CLI
+├── .env                         # Env vars (token, ports) — auto-generated on first run
+├── .env.example                 # Template for .env
+├── docker-compose.yml           # All services: Ollama + gateway + CLI (isolated network)
+├── docker-compose.internet.yml  # Overlay to enable internet access for gateway
 ├── config/
-│   └── openclaw.json       # OpenClaw config (model, provider, gateway settings)
-├── workspace/              # Agent workspace (created on first run)
-├── start.sh                # One-shot setup and launch script
-├── SETUP.md                # This file
-└── openclaw/               # Cloned OpenClaw source (git-ignored, used as build context)
+│   └── openclaw.json            # OpenClaw config (model, provider, sandbox, gateway)
+├── workspace/                   # Agent workspace (created on first run)
+├── start.sh                     # One-shot setup and launch script
+├── README.md                    # This file
+└── openclaw/                    # Cloned OpenClaw source (git-ignored, build context only)
 ```
 
 ## Configuration
@@ -75,6 +127,7 @@ clawbot-cage/
 | `OPENCLAW_GATEWAY_PORT` | `18789` | Gateway HTTP/WS port |
 | `OPENCLAW_BRIDGE_PORT` | `18790` | Bridge port |
 | `OPENCLAW_GATEWAY_BIND` | `lan` | Bind mode: `loopback`, `lan`, `tailnet` |
+| `OLLAMA_MODEL` | `qwen2.5-coder:32b` | Model to pull during setup |
 
 ### Switching Models
 
@@ -87,7 +140,7 @@ Edit `config/openclaw.json` — change the model ID in three places:
 Then pull the new model and restart:
 
 ```bash
-docker compose exec ollama ollama pull <model-name>
+docker compose --profile setup run --rm ollama-pull  # or: docker compose exec ollama ollama pull <model>
 docker compose restart openclaw-gateway
 ```
 
@@ -136,13 +189,13 @@ This uses the Metal GPU backend for inference.
 
 ```bash
 # WhatsApp (QR code scan)
-docker compose run --rm openclaw-cli channels login
+docker compose --profile cli run --rm openclaw-cli channels login
 
 # Telegram
-docker compose run --rm openclaw-cli channels add --channel telegram --token "<bot-token>"
+docker compose --profile cli run --rm openclaw-cli channels add --channel telegram --token "<bot-token>"
 
 # Discord
-docker compose run --rm openclaw-cli channels add --channel discord --token "<bot-token>"
+docker compose --profile cli run --rm openclaw-cli channels add --channel discord --token "<bot-token>"
 ```
 
 ## Common Commands
@@ -164,24 +217,30 @@ docker compose down -v
 docker compose exec ollama ollama list
 
 # Pull additional model
-docker compose exec ollama ollama pull <model>
+docker compose --profile setup run --rm ollama-pull
 
 # Health check
 docker compose exec openclaw-gateway node dist/index.mjs health --token "$OPENCLAW_GATEWAY_TOKEN"
+
+# Enable internet for the gateway
+docker compose -f docker-compose.yml -f docker-compose.internet.yml up -d openclaw-gateway
+
+# Disable internet (back to isolated)
+docker compose up -d openclaw-gateway
 ```
 
 ## Troubleshooting
 
 **Gateway won't start / config validation error:**
 ```bash
-docker compose run --rm openclaw-cli doctor
-docker compose run --rm openclaw-cli doctor --fix
+docker compose --profile cli run --rm openclaw-cli doctor
+docker compose --profile cli run --rm openclaw-cli doctor --fix
 ```
 
 **Model not responding:**
 ```bash
-# Verify Ollama is serving
-curl http://localhost:11434/v1/models
+# Verify Ollama is serving (from inside the network)
+docker compose exec ollama curl -s http://localhost:11434/v1/models
 
 # Check loaded models
 docker compose exec ollama ollama list
@@ -190,6 +249,8 @@ docker compose exec ollama ollama list
 **Out of memory:** Switch to a smaller model (see table above).
 
 **Slow inference on macOS Docker:** Use native Ollama (see macOS section).
+
+**Ports not reachable from LAN:** Ports are bound to `127.0.0.1` by design. If you need LAN access, change the port bindings in `docker-compose.yml` (remove the `127.0.0.1:` prefix) and ensure the gateway token is strong.
 
 ## License
 
