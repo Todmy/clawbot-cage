@@ -14,14 +14,7 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    # For GPU support on Linux, uncomment:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    # GPU support: use docker-compose.gpu.yml overlay
 
   # Temporary service to pull models (needs internet)
   ollama-pull:

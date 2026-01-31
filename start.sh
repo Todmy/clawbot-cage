@@ -48,27 +48,41 @@ ask() {
   done
 }
 
+# ── GPU detection ───────────────────────────────────────
+detect_nvidia() {
+  # Check for NVIDIA GPU on Linux
+  if [[ "$(uname)" != "Linux" ]]; then
+    return 1
+  fi
+  if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+    return 0
+  fi
+  if [[ -d /proc/driver/nvidia ]] || [[ -e /dev/nvidia0 ]]; then
+    return 0
+  fi
+  return 1
+}
+
 # ── Wizard ──────────────────────────────────────────────
 run_wizard() {
   echo -e "${BOLD}${CYAN}"
-  echo "┌─────────────────────────────────────────┐"
-  echo "│     Clawbot Cage — Setup Wizard          │"
-  echo "│     OpenClaw + Ollama (local models)     │"
-  echo "└─────────────────────────────────────────┘"
+  echo "┌──────────────────────────────────────────┐"
+  echo "│      Clawbot Cage — Setup Wizard         │"
+  echo "│      OpenClaw + Ollama (local models)    │"
+  echo "└──────────────────────────────────────────┘"
   echo -e "${RESET}"
 
-  # ── Model ───────────────────────────────────────────
+  # ── 1. Model ──────────────────────────────────────────
   header "1. Model Selection"
   info "The model determines quality, speed, and resource requirements."
   echo ""
   ask "Which model do you want to run?" \
-    "qwen2.5-coder:32b   — Best coding quality (~20GB, needs 32GB+ RAM)|qwen2.5-coder:7b    — Lightweight coding (~4.5GB, runs on 8GB RAM)|llama3.3:70b         — Strong general model (~40GB, needs 64GB+ RAM)|mistral-small:24b    — Balanced quality/size (~14GB, needs 24GB+ RAM)|deepseek-coder-v2:16b — Solid coding model (~9GB, needs 16GB+ RAM)" \
+    "qwen2.5-coder:32b    — Best coding quality (~20GB, needs 32GB+ RAM)|qwen2.5-coder:7b     — Lightweight coding (~4.5GB, runs on 8GB RAM)|llama3.3:70b          — Strong general model (~40GB, needs 64GB+ RAM)|mistral-small:24b     — Balanced quality/size (~14GB, needs 24GB+ RAM)|deepseek-coder-v2:16b — Solid coding model (~9GB, needs 16GB+ RAM)" \
     1
-  # Extract the model ID (everything before the first space)
   MODEL_ID="${REPLY%% *}"
   ok "Model: ${MODEL_ID}"
 
-  # ── Network ─────────────────────────────────────────
+  # ── 2. Network ────────────────────────────────────────
   header "2. Network Mode"
   info "Controls whether the bot can access the internet."
   echo ""
@@ -85,7 +99,7 @@ run_wizard() {
   esac
   ok "Network: ${NETWORK_MODE}"
 
-  # ── Web search (only if internet) ──────────────────
+  # ── 2b. Web search (only if internet) ────────────────
   ENABLE_SEARCH="false"
   if [[ "$NETWORK_MODE" == "internet" ]]; then
     header "2b. Web Search"
@@ -102,8 +116,63 @@ run_wizard() {
     ok "Web search: ${ENABLE_SEARCH}"
   fi
 
-  # ── Access ──────────────────────────────────────────
-  header "3. Dashboard Access"
+  # ── 3. Channels (only if internet) ───────────────────
+  CHANNELS=()
+  CHANNEL_TOKENS=()
+  if [[ "$NETWORK_MODE" == "internet" ]]; then
+    header "3. Messaging Channels"
+    info "Connect the bot to messaging platforms."
+    info "You can skip this and add channels later."
+    echo ""
+    ask "Set up a messaging channel now?" \
+      "Skip — configure channels later|Telegram — requires a bot token from @BotFather|Discord — requires a bot token from Discord Developer Portal|WhatsApp — scans a QR code (no token needed)" \
+      1
+    case "$REPLY" in
+      Telegram*)
+        CHANNELS+=("telegram")
+        echo ""
+        echo -e "  Get a token from ${BOLD}@BotFather${RESET} on Telegram:"
+        echo -e "  1. Open @BotFather → /newbot → follow prompts"
+        echo -e "  2. Copy the bot token"
+        echo ""
+        read -rp "  Telegram bot token: " tg_token
+        if [[ -n "$tg_token" ]]; then
+          CHANNEL_TOKENS+=("telegram:${tg_token}")
+          ok "Telegram token saved"
+        else
+          warn "No token provided — skipping Telegram setup"
+          CHANNELS=()
+        fi
+        ;;
+      Discord*)
+        CHANNELS+=("discord")
+        echo ""
+        echo -e "  Get a token from ${BOLD}Discord Developer Portal${RESET}:"
+        echo -e "  1. https://discord.com/developers/applications → New Application"
+        echo -e "  2. Bot → Reset Token → Copy"
+        echo -e "  3. Enable Message Content Intent under Privileged Gateway Intents"
+        echo ""
+        read -rp "  Discord bot token: " dc_token
+        if [[ -n "$dc_token" ]]; then
+          CHANNEL_TOKENS+=("discord:${dc_token}")
+          ok "Discord token saved"
+        else
+          warn "No token provided — skipping Discord setup"
+          CHANNELS=()
+        fi
+        ;;
+      WhatsApp*)
+        CHANNELS+=("whatsapp")
+        ok "WhatsApp will show a QR code after setup"
+        ;;
+      *)
+        ok "Skipping channel setup"
+        ;;
+    esac
+  fi
+
+  # ── 4. Dashboard Access ──────────────────────────────
+  header "4. Dashboard Access"
   info "Who can reach the dashboard and API."
   echo ""
   ask "Bind the dashboard to?" \
@@ -116,9 +185,11 @@ run_wizard() {
   esac
   ok "Bind: ${BIND_HOST}"
 
-  # ── Platform hint ───────────────────────────────────
-  header "4. Platform"
+  # ── 5. Platform & GPU ───────────────────────────────
+  header "5. Platform"
   PLATFORM="linux"
+  ENABLE_GPU="false"
+
   if [[ "$(uname)" == "Darwin" ]]; then
     info "Detected macOS."
     echo ""
@@ -129,15 +200,34 @@ run_wizard() {
       Native*) PLATFORM="macos-native" ;;
       *)       PLATFORM="docker" ;;
     esac
+  elif detect_nvidia; then
+    info "Detected NVIDIA GPU."
+    echo ""
+    ask "Enable GPU acceleration for Ollama?" \
+      "Yes — use NVIDIA GPU (much faster inference)|No  — CPU only" \
+      1
+    case "$REPLY" in
+      Yes*) ENABLE_GPU="true" ;;
+      *)    ENABLE_GPU="false" ;;
+    esac
+  else
+    info "No NVIDIA GPU detected. Using CPU inference."
+    PLATFORM="linux"
   fi
-  ok "Platform: ${PLATFORM}"
+  ok "Platform: ${PLATFORM}$(if [[ "$ENABLE_GPU" == "true" ]]; then echo " + NVIDIA GPU"; fi)"
 
-  # ── Summary ─────────────────────────────────────────
+  # ── Summary ───────────────────────────────────────────
   header "Summary"
   echo -e "  Model:       ${BOLD}${MODEL_ID}${RESET}"
   echo -e "  Network:     ${BOLD}${NETWORK_MODE}${RESET}"
   echo -e "  Web search:  ${BOLD}${ENABLE_SEARCH}${RESET}"
+  if [[ ${#CHANNELS[@]} -gt 0 ]]; then
+    echo -e "  Channel:     ${BOLD}${CHANNELS[*]}${RESET}"
+  else
+    echo -e "  Channel:     ${DIM}none${RESET}"
+  fi
   echo -e "  Dashboard:   ${BOLD}${BIND_HOST}${RESET}"
+  echo -e "  GPU:         ${BOLD}${ENABLE_GPU}${RESET}"
   echo -e "  Platform:    ${BOLD}${PLATFORM}${RESET}"
   echo ""
   read -rp "Proceed with this configuration? [Y/n]: " confirm
@@ -154,7 +244,6 @@ write_config() {
   # ── .env ──────────────────────────────────────────
   local TOKEN
   if [[ -f .env ]] && ! grep -q "changeme" .env; then
-    # Preserve existing token
     TOKEN=$(grep OPENCLAW_GATEWAY_TOKEN .env | cut -d= -f2)
   else
     TOKEN=$(openssl rand -hex 32)
@@ -168,20 +257,18 @@ OPENCLAW_BIND_HOST=${BIND_HOST}
 OPENCLAW_GATEWAY_TOKEN=${TOKEN}
 OLLAMA_MODEL=${MODEL_ID}
 NETWORK_MODE=${NETWORK_MODE}
+ENABLE_GPU=${ENABLE_GPU}
 EOF
   ok "Written .env (token: ${TOKEN:0:8}...)"
 
   # ── openclaw.json ─────────────────────────────────
-  # Determine baseUrl based on platform
   local OLLAMA_URL="http://ollama:11434/v1"
   if [[ "$PLATFORM" == "macos-native" ]]; then
     OLLAMA_URL="http://host.docker.internal:11434/v1"
   fi
 
-  # Build skills config
   local SKILLS_BLOCK=""
   if [[ "$ENABLE_SEARCH" == "false" ]]; then
-    # Deny web-related skills
     SKILLS_BLOCK='
   skills: {
     allowBundled: []
@@ -248,9 +335,19 @@ ${SKILLS_BLOCK}
 }
 EOF
   ok "Written config/openclaw.json"
+}
 
-  # ── Update port bindings in docker-compose.yml ────
-  # Handled via BIND_HOST in .env and compose interpolation
+# ── Compose command builder ─────────────────────────────
+# Builds the correct docker compose command with all overlays
+compose_cmd() {
+  local -a cmd=(docker compose -f docker-compose.yml)
+  if [[ "$NETWORK_MODE" == "internet" ]]; then
+    cmd+=(-f docker-compose.internet.yml)
+  fi
+  if [[ "$ENABLE_GPU" == "true" ]]; then
+    cmd+=(-f docker-compose.gpu.yml)
+  fi
+  "${cmd[@]}" "$@"
 }
 
 # ── Build & start ──────────────────────────────────────
@@ -263,7 +360,7 @@ build_and_start() {
 
   # Build the OpenClaw image
   header "Building OpenClaw image..."
-  docker compose build openclaw-gateway
+  compose_cmd build openclaw-gateway
 
   # Build sandbox image if the script exists
   if [ -f "$OPENCLAW_DIR/scripts/sandbox-setup.sh" ]; then
@@ -274,10 +371,10 @@ build_and_start() {
   # Start Ollama (unless native macOS)
   if [[ "$PLATFORM" != "macos-native" ]]; then
     header "Starting Ollama..."
-    docker compose up -d ollama
+    compose_cmd up -d ollama
 
     header "Pulling ${MODEL_ID} (this will take a while on first run)..."
-    docker compose --profile setup run --rm ollama-pull
+    compose_cmd --profile setup run --rm ollama-pull
   else
     header "Native Ollama mode"
     echo "Ensure Ollama is running: ollama serve"
@@ -288,24 +385,58 @@ build_and_start() {
 
   # Run onboard wizard
   header "Running OpenClaw onboard wizard..."
-  docker compose --profile cli run --rm openclaw-cli onboard --no-install-daemon
+  compose_cmd --profile cli run --rm openclaw-cli onboard --no-install-daemon
 
-  # Start the gateway (with or without internet)
-  header "Starting gateway..."
-  if [[ "$NETWORK_MODE" == "internet" ]]; then
-    docker compose -f docker-compose.yml -f docker-compose.internet.yml up -d openclaw-gateway
-  else
-    docker compose up -d openclaw-gateway
+  # ── Channel setup ─────────────────────────────────
+  if [[ ${#CHANNELS[@]} -gt 0 ]]; then
+    header "Setting up channels..."
+    for channel in "${CHANNELS[@]}"; do
+      case "$channel" in
+        whatsapp)
+          echo "Scanning WhatsApp QR code..."
+          compose_cmd --profile cli run --rm openclaw-cli channels login
+          ;;
+        telegram)
+          for ct in "${CHANNEL_TOKENS[@]}"; do
+            if [[ "$ct" == telegram:* ]]; then
+              local token="${ct#telegram:}"
+              compose_cmd --profile cli run --rm openclaw-cli channels add --channel telegram --token "$token"
+              ok "Telegram channel added"
+            fi
+          done
+          ;;
+        discord)
+          for ct in "${CHANNEL_TOKENS[@]}"; do
+            if [[ "$ct" == discord:* ]]; then
+              local token="${ct#discord:}"
+              compose_cmd --profile cli run --rm openclaw-cli channels add --channel discord --token "$token"
+              ok "Discord channel added"
+            fi
+          done
+          ;;
+      esac
+    done
   fi
 
+  # Start the gateway
+  header "Starting gateway..."
+  compose_cmd up -d openclaw-gateway
+
+  # ── Done ──────────────────────────────────────────
   echo ""
-  echo -e "${BOLD}${GREEN}┌─────────────────────────────────────────┐${RESET}"
-  echo -e "${BOLD}${GREEN}│          Setup complete!                 │${RESET}"
-  echo -e "${BOLD}${GREEN}└─────────────────────────────────────────┘${RESET}"
+  echo -e "${BOLD}${GREEN}┌──────────────────────────────────────────┐${RESET}"
+  echo -e "${BOLD}${GREEN}│           Setup complete!                │${RESET}"
+  echo -e "${BOLD}${GREEN}└──────────────────────────────────────────┘${RESET}"
   echo ""
   echo -e "  Dashboard:  ${BOLD}http://localhost:18789/${RESET}"
   echo -e "  Network:    ${BOLD}${NETWORK_MODE}${RESET}"
   echo -e "  Model:      ${BOLD}${MODEL_ID}${RESET}"
+  if [[ "$ENABLE_GPU" == "true" ]]; then
+    echo -e "  GPU:        ${BOLD}NVIDIA enabled${RESET}"
+  fi
+  if [[ ${#CHANNELS[@]} -gt 0 ]]; then
+    echo -e "  Channels:   ${BOLD}${CHANNELS[*]}${RESET}"
+  fi
 
   if [[ "$NETWORK_MODE" == "isolated" ]]; then
     echo ""
@@ -316,6 +447,7 @@ build_and_start() {
   echo ""
   echo -e "  Logs:       docker compose logs -f openclaw-gateway"
   echo -e "  Stop:       docker compose down"
+  echo -e "  Rerun:      ./start.sh"
   echo ""
 }
 
@@ -325,11 +457,14 @@ if [[ "${CLAWBOT_NON_INTERACTIVE:-}" == "1" ]]; then
   MODEL_ID="${OLLAMA_MODEL:-qwen2.5-coder:32b}"
   NETWORK_MODE="${NETWORK_MODE:-isolated}"
   ENABLE_SEARCH="${ENABLE_SEARCH:-false}"
+  ENABLE_GPU="${ENABLE_GPU:-false}"
   BIND_MODE="${OPENCLAW_GATEWAY_BIND:-loopback}"
   BIND_HOST="127.0.0.1"
   [[ "$BIND_MODE" == "lan" ]] && BIND_HOST="0.0.0.0"
   PLATFORM="docker"
   [[ "$(uname)" == "Darwin" ]] && PLATFORM="docker"
+  CHANNELS=()
+  CHANNEL_TOKENS=()
 else
   run_wizard
 fi
