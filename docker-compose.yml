@@ -54,8 +54,8 @@ services:
       - ./config:/home/node/.openclaw:ro
       - ./workspace:/home/node/.openclaw/workspace
     ports:
-      - "127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-      - "127.0.0.1:${OPENCLAW_BRIDGE_PORT:-18790}:18790"
+      - "${OPENCLAW_BIND_HOST:-127.0.0.1}:${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "${OPENCLAW_BIND_HOST:-127.0.0.1}:${OPENCLAW_BRIDGE_PORT:-18790}:18790"
     init: true
     restart: unless-stopped
     read_only: true
