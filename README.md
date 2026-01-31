@@ -53,7 +53,8 @@ Hardened by default. Multiple layers protect against prompt injection and host c
 - Gateway runs as non-root user (`node`, uid 1000).
 
 **Host filesystem protection**
-- `config/` mounted **read-only** into the gateway — prompt injection cannot rewrite config, model settings, or system prompts.
+- `openclaw.json` mounted **read-only** into the gateway — prompt injection cannot rewrite config, model settings, or system prompts.
+- Runtime state (devices, cron, canvas) stored in a Docker volume (`openclaw_state`), not on host.
 - `workspace/` is the only writable host mount. Don't put secrets here.
 - CLI runs on-demand only (not a persistent service).
 

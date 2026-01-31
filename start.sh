@@ -279,6 +279,7 @@ EOF
 {
   // Gateway
   gateway: {
+    mode: "local",
     port: 18789,
     controlUi: { enabled: true }
   },
@@ -286,7 +287,7 @@ ${SKILLS_BLOCK}
   // Agent config
   agents: {
     defaults: {
-      workspace: "~/.openclaw/workspace",
+      workspace: "~/workspace",
       model: {
         primary: "ollama/${MODEL_ID}"
       },
@@ -383,9 +384,28 @@ build_and_start() {
     read -rp "Press Enter when Ollama is ready..."
   fi
 
-  # Run onboard wizard
+  # Initialize openclaw state volume (fix ownership for node user)
+  header "Initializing state volume..."
+  docker run --rm -v openclaw_openclaw_state:/data alpine chown -R 1000:1000 /data 2>/dev/null || true
+
+  # Run onboard wizard (non-interactive: skip prompts, set auth)
   header "Running OpenClaw onboard wizard..."
-  compose_cmd --profile cli run --rm openclaw-cli onboard --no-install-daemon
+  compose_cmd --profile cli run --rm openclaw-cli onboard \
+    --non-interactive \
+    --accept-risk \
+    --mode local \
+    --auth-choice skip \
+    --gateway-port "${OPENCLAW_GATEWAY_PORT:-18789}" \
+    --gateway-bind lan \
+    --gateway-auth token \
+    --gateway-token "$OPENCLAW_GATEWAY_TOKEN" \
+    --no-install-daemon \
+    --skip-channels \
+    --skip-skills \
+    --skip-health \
+    --skip-ui \
+    --workspace /home/node/workspace \
+    || info "Onboard completed with warnings (non-critical)"
 
   # ── Channel setup ─────────────────────────────────
   if [[ ${#CHANNELS[@]} -gt 0 ]]; then
@@ -428,7 +448,7 @@ build_and_start() {
   echo -e "${BOLD}${GREEN}│           Setup complete!                │${RESET}"
   echo -e "${BOLD}${GREEN}└──────────────────────────────────────────┘${RESET}"
   echo ""
-  echo -e "  Dashboard:  ${BOLD}http://localhost:18789/${RESET}"
+  echo -e "  Dashboard:  ${BOLD}http://localhost:${OPENCLAW_GATEWAY_PORT:-18789}/?token=${OPENCLAW_GATEWAY_TOKEN}${RESET}"
   echo -e "  Network:    ${BOLD}${NETWORK_MODE}${RESET}"
   echo -e "  Model:      ${BOLD}${MODEL_ID}${RESET}"
   if [[ "$ENABLE_GPU" == "true" ]]; then

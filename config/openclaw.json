@@ -1,54 +1,51 @@
 {
-  // Gateway
-  gateway: {
-    port: 18789,
-    controlUi: { enabled: true }
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "controlUi": { "enabled": true }
   },
-
-  // Agent config
-  agents: {
-    defaults: {
-      workspace: "~/.openclaw/workspace",
-      model: {
-        primary: "ollama/qwen2.5-coder:32b"
+  "skills": {
+    "allowBundled": []
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/workspace",
+      "model": {
+        "primary": "ollama/qwen2.5-coder:7b"
       },
-      models: {
-        "ollama/qwen2.5-coder:32b": { alias: "Qwen Coder" }
+      "models": {
+        "ollama/qwen2.5-coder:7b": { "alias": "Local Model" }
       },
-
-      // Sandbox: tool execution runs in isolated throwaway containers
-      sandbox: {
-        mode: "non-main",
-        scope: "agent",
-        workspaceAccess: "rw",
-        docker: {
-          image: "openclaw-sandbox:bookworm-slim",
-          readOnlyRoot: true,
-          network: "none",
-          user: "1000:1000",
-          capDrop: ["ALL"]
+      "sandbox": {
+        "mode": "non-main",
+        "scope": "agent",
+        "workspaceAccess": "rw",
+        "docker": {
+          "image": "openclaw-sandbox:bookworm-slim",
+          "readOnlyRoot": true,
+          "network": "none",
+          "user": "1000:1000",
+          "capDrop": ["ALL"]
         }
       }
     }
   },
-
-  // Custom provider: Ollama running as Docker sidecar
-  models: {
-    mode: "merge",
-    providers: {
-      ollama: {
-        baseUrl: "http://ollama:11434/v1",
-        apiKey: "ollama",
-        api: "openai-responses",
-        models: [
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://ollama:11434/v1",
+        "apiKey": "ollama",
+        "api": "openai-responses",
+        "models": [
           {
-            id: "qwen2.5-coder:32b",
-            name: "Qwen 2.5 Coder 32B",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 32768,
-            maxTokens: 8192
+            "id": "qwen2.5-coder:7b",
+            "name": "qwen2.5-coder:7b",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+            "contextWindow": 32768,
+            "maxTokens": 8192
           }
         ]
       }
